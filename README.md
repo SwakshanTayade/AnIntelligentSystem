@@ -32,5 +32,5 @@
 
 ### 9: now we can make the sql connection;
 # make a DB named "cv" and inside the code change the password to your SQL DB(workbench) password;
-### 10: now we can run the code and "treamlit run App.py";
+### 10: now we can run the code and "streamlit run App.py"
 
