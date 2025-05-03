@@ -297,42 +297,115 @@ def fetch_related_skills(skill, access_token):
 import re
 from datetime import datetime
 
+def extract_name_from_email(email):
+    """
+    Extract name components from an email address
+    Example: john.doe@example.com -> John Doe
+    """
+    if not email:
+        return None
+    
+    # Remove domain part
+    local_part = email.split('@')[0] if '@' in email else email
+    
+    # Common patterns for extracting name from email
+    # Try to split by dots, underscores, or numbers
+    name_parts = re.split(r'[._0-9]+', local_part)
+    
+    # Capitalize each part and join with space
+    name = ' '.join([part.capitalize() for part in name_parts if part])
+    
+    return name if name else None
+
 def extract_experience(resume_text):
+    """
+    Enhanced experience extraction with multiple pattern matching
+    """
     experience_section = []
-    total_experience_years = 0
-
-    # Regex to identify experience sections
-    experience_pattern = re.compile(r'(Experience|Work History|Professional Experience|Employment History)', re.IGNORECASE)
-    experience_match = experience_pattern.search(resume_text)
-
-    if experience_match:
-        # Extract the experience section
-        start_index = experience_match.start()
-        end_index = resume_text.find("\n\n", start_index)  # Assuming sections are separated by double newlines
-        experience_section_text = resume_text[start_index:end_index]
-
-        # Regex to extract individual experiences
-        experience_entry_pattern = re.compile(r'([A-Za-z\s]+)\s*at\s*([A-Za-z\s]+)\s*\((\d{1,2}/\d{4})\s*-\s*(\d{1,2}/\d{4}|Present)\)', re.IGNORECASE)
-        experience_entries = experience_entry_pattern.findall(experience_section_text)
-
-        for entry in experience_entries:
-            job_title, company, start_date, end_date = entry
-            start_date = datetime.strptime(start_date, '%m/%Y')
-            end_date = datetime.now() if end_date == 'Present' else datetime.strptime(end_date, '%m/%Y')
-            duration = (end_date - start_date).days / 365  # Convert days to years
-            total_experience_years += duration
-
-            experience_section.append({
-                'job_title': job_title.strip(),
-                'company': company.strip(),
-                'start_date': start_date.strftime('%m/%Y'),
-                'end_date': end_date.strftime('%m/%Y'),
-                'duration_years': round(duration, 2)
-            })
-
+    total_experience_months = 0
+    
+    # Multiple patterns to detect experience section
+    experience_patterns = [
+        r'(?i)(?:experience|work history|professional experience|employment history|work experience)',
+        r'(?i)(?:jobs?|positions?|roles?) held',
+        r'(?i)(?:professional|work|employment) background'
+    ]
+    
+    # Find experience section using multiple patterns
+    exp_section_text = ""
+    for pattern in experience_patterns:
+        match = re.search(pattern, resume_text)
+        if match:
+            start = match.start()
+            # Look for end of section (double newline or next major section)
+            end = re.search(r'\n\s*\n|\b(?:education|skills|projects)\b', resume_text[start:], re.I)
+            if end:
+                exp_section_text = resume_text[start:start+end.start()]
+            else:
+                exp_section_text = resume_text[start:]
+            break
+    
+    if not exp_section_text:
+        return [], 0
+    
+    # Enhanced job entry patterns
+    job_patterns = [
+        # Pattern 1: Job title at Company (MM/YYYY - MM/YYYY)
+        r'(?i)([\w\s\-\.]+)\s*(?:at|@|in)\s*([\w\s\-\.,&]+)\s*\((\d{1,2}/\d{4}|\w+\s\d{4})\s*-\s*(\d{1,2}/\d{4}|\w+\s\d{4}|present|current)\)',
+        # Pattern 2: Company - Job title (MM/YYYY - MM/YYYY)
+        r'(?i)([\w\s\-\.,&]+)\s*[-–]\s*([\w\s\-\.]+)\s*\((\d{1,2}/\d{4}|\w+\s\d{4})\s*-\s*(\d{1,2}/\d{4}|\w+\s\d{4}|present|current)\)',
+        # Pattern 3: Bullet point style
+        r'(?i)^\s*[-•*]\s*([\w\s\-\.]+)\s*(?:at|@|in)\s*([\w\s\-\.,&]+)\s*,\s*(\d{1,2}/\d{4}|\w+\s\d{4})\s*-\s*(\d{1,2}/\d{4}|\w+\s\d{4}|present|current)',
+    ]
+    
+    for pattern in job_patterns:
+        for match in re.finditer(pattern, exp_section_text):
+            job_title, company, start_date, end_date = match.groups()
+            
+            # Standardize date formats
+            try:
+                if len(start_date.split('/')) == 2:
+                    start_date = datetime.strptime(start_date, '%m/%Y')
+                else:
+                    start_date = datetime.strptime(start_date, '%B %Y')
+                
+                if end_date.lower() in ['present', 'current']:
+                    end_date = datetime.now()
+                elif len(end_date.split('/')) == 2:
+                    end_date = datetime.strptime(end_date, '%m/%Y')
+                else:
+                    end_date = datetime.strptime(end_date, '%B %Y')
+                
+                duration = (end_date.year - start_date.year) * 12 + (end_date.month - start_date.month)
+                total_experience_months += duration
+                
+                experience_section.append({
+                    'job_title': job_title.strip(),
+                    'company': company.strip(),
+                    'start_date': start_date.strftime('%b %Y'),
+                    'end_date': end_date.strftime('%b %Y'),
+                    'duration_months': duration,
+                    'duration_years': round(duration / 12, 1)
+                })
+            except ValueError as e:
+                continue
+    
+    total_experience_years = round(total_experience_months / 12, 1)
     return experience_section, total_experience_years
 
 
+def determine_experience_level(total_experience_years):
+    """
+    Determine candidate level based on actual experience years
+    """
+    if total_experience_years == 0:
+        return "Fresher"
+    elif total_experience_years <= 3:
+        return "Intermediate"
+    elif total_experience_years <= 7:
+        return "Experienced"
+    else:
+        return "Senior"
 
 def fetch_youtube_courses(query, max_results=1):
     """
@@ -359,6 +432,78 @@ def fetch_youtube_courses(query, max_results=1):
         except Exception as e:
             st.error(f"Failed to fetch YouTube courses: {e}")
             return []
+
+def analyze_resume_with_hf(resume_text, hf_token):
+    """
+    Analyze resume using Hugging Face's Inference API.
+    Returns a score between 0-100 using zero-shot classification approach.
+    """
+    API_URL = "https://api-inference.huggingface.co/models/facebook/bart-large-mnli"
+    headers = {"Authorization": f"Bearer {hf_token}"}
+
+    # Define scoring categories with score ranges
+    score_categories = [
+        "Excellent (90-100): Complete sections, strong keywords, professional tone, clear achievements, excellent structure",
+        "Good (75-89): Mostly complete, relevant keywords, professional tone, some achievements, good structure",
+        "Average (50-74): Some missing sections, some relevant keywords, decent tone, few achievements, basic structure",
+        "Weak (0-49): Incomplete, weak keywords, unprofessional tone, no achievements, poor structure"
+    ]
+
+    payload = {
+        "inputs": resume_text[:2000],  # Limit input size
+        "parameters": {
+            "candidate_labels": score_categories,
+            "multi_label": False
+        }
+    }
+
+    try:
+        response = requests.post(API_URL, headers=headers, json=payload, timeout=30)
+        response.raise_for_status()  # Raises exception for 4XX/5XX errors
+        
+        result = response.json()
+        
+        # Extract the predicted category
+        predicted_category = result['labels'][0]
+        confidence = result['scores'][0]
+        
+        # Map category to numerical score (midpoint of range)
+        if "Excellent" in predicted_category:
+            return min(100, int(95 * confidence))  # Scale by confidence
+        elif "Good" in predicted_category:
+            return min(89, int(82 * confidence))
+        elif "Average" in predicted_category:
+            return min(74, int(62 * confidence))
+        else:
+            return min(49, int(30 * confidence))
+            
+    except requests.exceptions.RequestException as e:
+        st.error(f"API request failed: {str(e)}")
+        return 69  # Fallback average score
+    except (KeyError, IndexError, ValueError) as e:
+        st.error(f"Error parsing API response: {str(e)}")
+        return 67
+    except Exception as e:
+        st.error(f"Unexpected error: {str(e)}")
+        return 68
+
+
+
+def detect_sections(resume_text):
+    doc = nlp(resume_text)
+    sections = {
+        'Objective': ['objective', 'summary', 'career goal'],
+        'Skills': ['skills', 'technical skills', 'proficiencies'],
+        'Experience': ['experience', 'work history', 'employment'],
+        'Education': ['education', 'academic'],
+        'Projects': ['projects', 'portfolio'],
+        'Achievements': ['achievements', 'awards', 'honors'],
+        'Certifications': ['certifications', 'certificates', 'credentials']
+    }
+    section_scores = {}
+    for section, keywords in sections.items():
+        section_scores[section] = any(keyword.lower() in resume_text.lower() for keyword in keywords)
+    return section_scores
 #CONNECT TO DATABASE
 
 connection = pymysql.connect(host='localhost',user='root',password='Swakshan@123',db='cv')
@@ -373,7 +518,7 @@ def insert_data(name,email,res_score,timestamp,no_of_pages,reco_field,cand_level
     connection.commit()
 
 st.set_page_config(
-   page_title="AI Resume Analyzer",
+   page_title="ResumeForge.ai",
    page_icon='./Logo/Logo/logo2.png',
 )
 def run():
@@ -382,7 +527,7 @@ def run():
     
     load_lottie("https://assets10.lottiefiles.com/packages/lf20_3rwasyjy.json")
     load_lottie("https://assets10.lottiefiles.com/packages/lf20_qp1q7mct.json", sidebar=True)
-    st.title("An Intelligent System for Automated Resume Screening and Skill Evaluation Using NLP and Machine Learning")
+    st.title("ResumeForge.ai")
 
     activities = ["Resume Analyzer", "Developer","Resume Builder"]
     choice = st.sidebar.segmented_control('Choose the Mode', options=activities)
@@ -438,10 +583,12 @@ def run():
                 st.text_area("Extracted Resume Text:", resume_text, height=300)  # Displays full text in Streamlit UI   
                 st.header("**Resume Analysis**")
                 # Check if 'name' exists and is not None
-                if resume_data.get('name'):  # Use .get() to safely access the key
-                    st.success("Hello " + resume_data['name'])
+                # Extract name with improved function
+                resume_data['name'] = extract_name_from_email(resume_data.get('email'))
+                if not resume_data.get('name'):
+                    st.success("Hello!")
                 else:
-                    st.success("Hello!")  # Default greeting if name is not found
+                    st.success("Hello " + resume_data['name'])
 
                 st.subheader("**Your Basic info**")
                 try:
@@ -452,25 +599,15 @@ def run():
                 except Exception as e:
                     st.error(f"Error displaying basic info: {e}")
                     
-                cand_level = ''
-                st.text('Total Experience Years: ' + str(total_experience_years))
-                st.text('Experience Section: ' + str(experience_section))
-                print("Extracted experience data:", experience_section)
-                print("Total experience years:", total_experience_years)
+                # Determine experience level properly
+                cand_level = determine_experience_level(total_experience_years)
 
-                experience_years = 0
-                if 'experience' in resume_data and resume_data['experience']:
-                    experience_years = sum(exp.get('years', 0) for exp in resume_data['experience'])
-
-                if experience_years == 0:
-                    cand_level = "Fresher"
-                    st.markdown( '''<h4 style='text-align: left; color: white;'>You are a Fresher!</h4>''',unsafe_allow_html=True)
-                elif experience_years <= 3:
-                    cand_level = "Intermediate"
-                    st.markdown( '''<h4 style='text-align: left; color: white;'>You are at Senior Postion!</h4>''',unsafe_allow_html=True)
-                else:
-                    cand_level = "Experienced"
-                    st.markdown( '''<h4 style='text-align: left; color: white;'>You are at Experienced Position!</h4>''',unsafe_allow_html=True)
+                # Display to user
+                st.text(f'Total Experience: {total_experience_years} years')
+                if experience_section:
+                    st.subheader("Work Experience Details")
+                    for exp in experience_section:
+                        st.text(f"{exp['job_title']} at {exp['company']} ({exp['start_date']} - {exp['end_date']})")
                 # st.subheader("**Skills Recommendation💡**")
                 ## Skill shows
                 keywords = st_tags(label='### Your Current Skills',
@@ -622,55 +759,36 @@ def run():
 
                 ### Resume writing recommendation
                 st.subheader("**Resume Tips & Ideas💡**")
-                resume_score = 0
-                if 'Objective' in resume_text:
-                    resume_score = resume_score+20
-                    st.markdown('''<h5 style='text-align: left; color: #1ed760;'>[+] Awesome! You have added Objective</h4>''',unsafe_allow_html=True)
-                else:
-                    st.markdown('''<h5 style='text-align: left; color: red;'>[-] Please add your career objective, it will give your career intension to the Recruiters.</h4>''',unsafe_allow_html=True)
+                section_scores = detect_sections(resume_text)
+                for section, present in section_scores.items():
+                    if present:
+                        st.markdown(f'''<h5 style='text-align: left; color: #1ed760;'>[+] Awesome! You have added {section}</h5>''', unsafe_allow_html=True)
+                    else:
+                        st.markdown(f'''<h5 style='text-align: left; color: red;'>[-] Please add {section} to improve your resume.</h5>''', unsafe_allow_html=True)
 
-                if 'Declaration'  in resume_text:
-                    resume_score = resume_score + 20
-                    st.markdown('''<h5 style='text-align: left; color: #1ed760;'>[+] Awesome! You have added Delcaration/h4>''',unsafe_allow_html=True)
-                else:
-                    st.markdown('''<h5 style='text-align: left; color: red;'>[-] Please add Declaration. It will give the assurance that everything written on your resume is true and fully acknowledged by you</h4>''',unsafe_allow_html=True)
-
-                if 'Hobbies' or 'Interests'in resume_text:
-                    resume_score = resume_score + 20
-                    st.markdown('''<h5 style='text-align: left; color: #1ed760;'>[+] Awesome! You have added your Hobbies</h4>''',unsafe_allow_html=True)
-                else:
-                    st.markdown('''<h5 style='text-align: left; color: red;'>[-] Please add Hobbies. It will show your persnality to the Recruiters and give the assurance that you are fit for this role or not.</h4>''',unsafe_allow_html=True)
-
-                if 'Achievements' in resume_text:
-                    resume_score = resume_score + 20
-                    st.markdown('''<h5 style='text-align: left; color: #1ed760;'>[+] Awesome! You have added your Achievements </h4>''',unsafe_allow_html=True)
-                else:
-                    st.markdown('''<h5 style='text-align: left; color: red;'>[-] Please add Achievements. It will show that you are capable for the required position.</h4>''',unsafe_allow_html=True)
-
-                if 'Projects' in resume_text:
-                    resume_score = resume_score + 20
-                    st.markdown('''<h5 style='text-align: left; color: #1ed760;'>[+] Awesome! You have added your Projects</h4>''',unsafe_allow_html=True)
-                else:
-                    st.markdown('''<h5 style='text-align: left; color: red;'>[-] Please add Projects. It will show that you have done work related the required position or not.</h4>''',unsafe_allow_html=True)
-
-                st.subheader("**Resume Score📝**")
-                st.markdown(
-                    """
-                    <style>
-                        .stProgress > div > div > div > div {
-                            background-color: #d73b5c;
-                        }
-                    </style>""",
-                    unsafe_allow_html=True,
-                )
-                my_bar = st.progress(0)
-                score = 0
-                for percent_complete in range(resume_score):
-                    score +=1
-                    time.sleep(0.1)
-                    my_bar.progress(percent_complete + 1)
-                st.success('** Your Resume Writing Score: ' + str(score)+'**')
-                st.warning("** Note: This score is calculated based on the content that you have in your Resume. **")
+                st.subheader("**AI Resume Score Analysis**")
+                try:
+                    with st.spinner('Analyzing resume quality...'):
+                        HF_TOKEN = "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"  # Replace with your actual HF token
+                        resume_score = analyze_resume_with_hf(resume_text, HF_TOKEN)
+                    
+                    # Progress bar
+                    my_bar = st.progress(0)
+                    for percent_complete in range(resume_score):
+                        time.sleep(0.02)
+                        my_bar.progress(percent_complete*2 + 1)
+                    
+                    st.success(f'**AI Assessment Score: {resume_score*2}/100**')
+                    st.warning("""
+                    **Scoring Criteria:**
+                    - Completeness of sections  
+                    - Keyword relevance  
+                    - Professional tone  
+                    - Demonstrated achievements  
+                    - Structure  
+                    """)
+                except Exception as e:
+                    st.error(f"Error analyzing resume: {e}")
                 st.balloons()
 
                 insert_data(resume_data['name'], resume_data['email'], str(resume_score), timestamp,
@@ -772,7 +890,7 @@ def run():
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 )
     else:
-        st.success('Welcome to Admin Side')
+        st.success('Welcome to Admin Side (FYP_G3)')
         ad_user = st.text_input("Username")
         ad_password = st.text_input("Password", type='password')
         if st.button('Login'):
