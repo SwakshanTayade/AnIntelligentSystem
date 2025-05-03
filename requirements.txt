@@ -18,7 +18,7 @@ python-dotenv
 nltk
 playwright
 #playwright install
-scikit-learn
-transformers==4.31.0
-sentence-transformers
-pdfplumber
+# scikit-learn
+# transformers==4.31.0
+# sentence-transformers
+# pdfplumber
