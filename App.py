@@ -769,7 +769,7 @@ def run():
                 st.subheader("**AI Resume Score Analysis**")
                 try:
                     with st.spinner('Analyzing resume quality...'):
-                        HF_TOKEN = "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"  # Replace with your actual HF token
+                        HF_TOKEN = os.getenv("HF_TOKEN")  # Replace with your actual HF token
                         resume_score = analyze_resume_with_hf(resume_text, HF_TOKEN)
                     
                     # Progress bar
@@ -819,6 +819,7 @@ def run():
         if 'resume_builder' in st.session_state and st.session_state['resume_builder']:
             st.header("Lets build a great resume")
         
+            
             template = st.selectbox("Choose a Template", ["Modern", "Professional", "Minimal Creative"])
             # Collect resume data from the user
             personal_info = {}
