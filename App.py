@@ -192,7 +192,7 @@ def fetch_related_skills(skill, access_token):
     }
     params = {
         "q": skill,
-        "limit": 10
+        "limit": 3
     }
     try:
         response = requests.get(SKILLS_API_URL, headers=headers, params=params)
@@ -324,7 +324,109 @@ def detect_sections(resume_text):
     return section_scores
 
 # Hardcode your Groq API key
-GROQ_API_KEY = os.environ['GROQ_API_KEY']  
+# os.environ['GROQ_API_KEY']
+GROQ_API_KEY = os.environ['GROQ_API_KEY']
+
+# Updated function to extract resume details using Groq API
+def extract_resume_info_with_groq(resume_text, groq_api_key):
+    if not groq_api_key:
+        st.error("🔑 Groq API key is missing!")
+        return None
+
+    # Clean resume text to avoid JSON issues
+    safe_resume_text = resume_text.replace('\\', '\\\\').replace('"', '\\"')
+
+    # Improved prompt with explicit JSON instructions and example
+    prompt = (
+        "**Task**: Extract the following information from the resume text and return it in valid JSON format.\n"
+        "**Fields to Extract**:\n"
+        "1. **Name**: Full name of the candidate.\n"
+        "2. **Email**: Email address.\n"
+        "3. **Contact**: Phone number (include country code if present).\n"
+        "4. **Experience**: List of work experiences, each with job_title, company, start_date, end_date, and duration (in months).\n"
+        "5. **Total Experience Years**: Total years of experience (rounded to 1 decimal place).\n"
+        "6. **Experience Level**: Classify as 'Fresher' (0 years), 'Intermediate' (<=3 years), 'Experienced' (<=7 years), or 'Senior' (>7 years).\n\n"
+        "**Instructions**:\n"
+        "- Return *only* a valid JSON object. Do not include any additional text, explanations, or markdown (e.g., ```json).\n"
+        "- Use null for missing fields.\n"
+        "- For dates, use 'MM/YYYY' format or 'Present' for current roles.\n"
+        "- Calculate duration in months for each experience and sum for total experience years.\n"
+        "- Example output:\n"
+        "{\n"
+        "  \"Name\": \"John Doe\",\n"
+        "  \"Email\": \"john.doe@example.com\",\n"
+        "  \"Contact\": \"+1-555-123-4567\",\n"
+        "  \"Experience\": [\n"
+        "    {\"job_title\": \"Software Engineer\", \"company\": \"Tech Corp\", \"start_date\": \"01/2020\", \"end_date\": \"Present\", \"duration\": 64},\n"
+        "    {\"job_title\": \"Junior Developer\", \"company\": \"Startup Inc\", \"start_date\": \"06/2018\", \"end_date\": \"12/2019\", \"duration\": 18}\n"
+        "  ],\n"
+        "  \"Total Experience Years\": 6.8,\n"
+        "  \"Experience Level\": \"Experienced\"\n"
+        "}\n\n"
+        f"**Resume Text**:\n{safe_resume_text[:50000]}"
+    )
+
+    headers = {
+        "Authorization": f"Bearer {groq_api_key}",
+        "Content-Type": "application/json"
+    }
+
+    payload = {
+        "messages": [{"role": "user", "content": prompt}],
+        "model": "llama-3.3-70b-versatile",
+        "temperature": 0.2,
+        "max_tokens": 2000
+    }
+
+    try:
+        with st.spinner("🔍 Extracting resume details"):
+            response = requests.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=30
+            )
+        if response.status_code == 200:
+            response_content = response.json()["choices"][0]["message"]["content"]
+            # Try to extract JSON if wrapped in markdown or extra text
+            json_match = re.search(r'\{[\s\S]*\}', response_content)
+            if json_match:
+                response_content = json_match.group(0)
+            try:
+                extracted_data = json.loads(response_content)
+                return extracted_data
+            except json.JSONDecodeError as e:
+                st.error(f"❌ Failed to parse Groq response as JSON: {e}")
+                st.write("Raw response:", response_content)
+                return None
+        else:
+            st.warning(f"❌ Primary model failed: {response.status_code} - {response.text}. Trying fallback model...")
+            payload["model"] = "llama3-70b-8192"
+            with st.spinner("🔍 Extracting with Llama3-70B-8192 (fallback)..."):
+                response = requests.post(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    headers=headers,
+                    json=payload,
+                    timeout=30
+                )
+            if response.status_code == 200:
+                response_content = response.json()["choices"][0]["message"]["content"]
+                json_match = re.search(r'\{[\s\S]*\}', response_content)
+                if json_match:
+                    response_content = json_match.group(0)
+                try:
+                    extracted_data = json.loads(response_content)
+                    return extracted_data
+                except json.JSONDecodeError as e:
+                    st.error(f"❌ Failed to parse fallback Groq response as JSON: {e}")
+                    st.write("Raw response:", response_content)
+                    return None
+            else:
+                st.error(f"❌ Fallback model failed: {response.status_code} - {response.text}")
+                return None
+    except Exception as e:
+        st.error(f"❌ Failed to call Groq API: {e}")
+        return None
 
 # Groq ATS Scoring Function with Fallback
 def analyze_with_groq(resume_text, groq_api_key):
@@ -366,7 +468,6 @@ def analyze_with_groq(resume_text, groq_api_key):
             return response.json()["choices"][0]["message"]["content"]
         else:
             st.warning(f"❌ Primary model failed: {response.status_code} - {response.text}. Trying fallback model...")
-            # Fallback to llama3-70b-8192
             payload["model"] = "llama3-70b-8192"
             with st.spinner("🔍 Analyzing with Llama3-70B-8192 (fallback)..."):
                 response = requests.post(
@@ -384,18 +485,19 @@ def analyze_with_groq(resume_text, groq_api_key):
         st.error(f"❌ Failed to call Groq API: {e}")
         return None
 
-# Database Connection
+# Database Connection (aligned with repository)
 connection = pymysql.connect(host='localhost', user='root', password='Swakshan@123', db='cv')
 cursor = connection.cursor()
 
 def insert_data(name, email, res_score, timestamp, no_of_pages, reco_field, cand_level, skills, recommended_skills, courses):
     DB_table_name = 'user_data'
-    insert_sql = "insert into " + DB_table_name + """
-    values (0,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"""
-    rec_values = (name, email, str(res_score), timestamp, str(no_of_pages), reco_field, cand_level, skills, recommended_skills, courses)
+    insert_sql = "INSERT INTO " + DB_table_name + """
+    (Name, Email_ID, resume_score, Timestamp, Page_no, Predicted_Field, User_level, Actual_skills, Recommended_skills, Recommended_courses)
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"""
+    rec_values = (name, email, res_score, timestamp, no_of_pages, reco_field, cand_level, skills, recommended_skills, courses)
     cursor.execute(insert_sql, rec_values)
     connection.commit()
-
+    
 st.set_page_config(
     page_title="ResumeForge.ai",
     page_icon='./Logo/Logo/logo2.png',
@@ -417,21 +519,22 @@ def run():
     cursor.execute(db_sql)
 
     DB_table_name = 'user_data'
-    table_sql = "CREATE TABLE IF NOT EXISTS " + DB_table_name + """(
-                    ID INT NOT NULL AUTO_INCREMENT,
-                    Name varchar(500) NOT NULL,
-                    Email_ID VARCHAR(500) NOT NULL,
-                    resume_score VARCHAR(8) NOT NULL,
-                    Timestamp VARCHAR(50) NOT NULL,
-                    Page_no VARCHAR(5) NOT NULL,
-                    Predicted_Field TEXT NOT NULL,
-                    User_level TEXT NOT NULL,
-                    Actual_skills TEXT NOT NULL,
-                    Recommended_skills TEXT NOT NULL,
-                    Recommended_courses TEXT NOT NULL,
-                    PRIMARY KEY (ID)
-                     );
-                    """
+    table_sql = """
+        CREATE TABLE IF NOT EXISTS user_data (
+            ID INT NOT NULL AUTO_INCREMENT,
+            Name VARCHAR(100) NOT NULL,
+            Email_ID VARCHAR(50) NOT NULL,
+            resume_score VARCHAR(8) NOT NULL,
+            Timestamp VARCHAR(50) NOT NULL,
+            Page_no VARCHAR(5) NOT NULL,
+            Predicted_Field VARCHAR(100) NOT NULL,
+            User_level VARCHAR(30) NOT NULL,
+            Actual_skills VARCHAR(300) NOT NULL,
+            Recommended_skills VARCHAR(300) NOT NULL,
+            Recommended_courses VARCHAR(600) NOT NULL,
+            PRIMARY KEY (ID)
+        );
+    """
     cursor.execute(table_sql)
 
     if choice == 'Resume Analyzer':
@@ -447,38 +550,82 @@ def run():
                 f.write(pdf_file.getbuffer())
             show_pdf(save_image_path)
             resume_data = ResumeParser(save_image_path).get_extracted_data()
-            if resume_data:
-                resume_text = pdf_reader(save_image_path)
-                experience_section, total_experience_years = extract_experience(resume_text)
-                resume_data['experience'] = experience_section
-                resume_data['total_experience_years'] = total_experience_years
+            resume_text = pdf_reader(save_image_path)
+            
+            if resume_data and resume_text:
                 st.text_area("Extracted Resume Text:", resume_text, height=300)
                 st.header("**Resume Analysis**")
-                resume_data['name'] = extract_name_from_email(resume_data.get('email'))
-                if not resume_data.get('name'):
-                    st.success("Hello!")
+
+                # Extract details using Groq API
+                groq_extracted_data = extract_resume_info_with_groq(resume_text, GROQ_API_KEY)
+                if groq_extracted_data:
+                    # Update resume_data with Groq-extracted fields
+                    resume_data['name'] = groq_extracted_data.get('Name', resume_data.get('name', extract_name_from_email(resume_data.get('email'))))
+                    resume_data['email'] = groq_extracted_data.get('Email', resume_data.get('email', 'Not provided'))
+                    resume_data['mobile_number'] = groq_extracted_data.get('Contact', resume_data.get('mobile_number', 'Not provided'))
+                    resume_data['experience'] = groq_extracted_data.get('Experience', [])
+                    resume_data['total_experience_years'] = groq_extracted_data.get('Total Experience Years', 0)
+                    resume_data['experience_level'] = groq_extracted_data.get('Experience Level', 'Fresher')
+
+                    # Store in session state
+                    st.session_state['resume_data'] = resume_data
+
+                    # Display extracted information
+                    st.subheader("**Your Basic Info**")
+                    st.text(f"Name: {resume_data['name'] or 'Not provided'}")
+                    st.text(f"Email: {resume_data['email'] or 'Not provided'}")
+                    st.text(f"Contact: {resume_data['mobile_number'] or 'Not provided'}")
+                    st.text(f"Resume pages: {str(resume_data['no_of_pages'] or 'Not provided')}")
+                    st.text(f"Total Experience: {resume_data['total_experience_years']} years")
+                    st.text(f"Experience Level: {resume_data['experience_level']}")
+
+                    if resume_data['experience']:
+                        st.subheader("**Work Experience Details**")
+                        exp_df = pd.DataFrame(resume_data['experience'])
+                        st.dataframe(exp_df)
+
+                    # Display greeting
+                    if resume_data['name'] and resume_data['name'] != 'Not provided':
+                        st.success(f"Hello {resume_data['name']}!")
+                    else:
+                        st.success("Hello!")
+
                 else:
-                    st.success("Hello " + resume_data['name'])
+                    st.error("Failed to extract resume details with Groq API. Falling back to ResumeParser.")
+                    # Fallback to existing extraction methods
+                    experience_section, total_experience_years = extract_experience(resume_text)
+                    resume_data['experience'] = experience_section
+                    resume_data['total_experience_years'] = total_experience_years
+                    resume_data['experience_level'] = determine_experience_level(total_experience_years)
+                    resume_data['name'] = extract_name_from_email(resume_data.get('email')) or 'Not provided'
+                    resume_data['email'] = resume_data.get('email', 'Not provided')
+                    resume_data['mobile_number'] = resume_data.get('mobile_number', 'Not provided')
 
-                st.subheader("**Your Basic info**")
-                try:
-                    st.text('Name: ' + (resume_data['name'] if resume_data.get('name') else 'Not provided'))
-                    st.text('Email: ' + (resume_data['email'] if resume_data.get('email') else 'Not provided'))
-                    st.text('Contact: ' + (resume_data['mobile_number'] if resume_data.get('mobile_number') else 'Not provided'))
-                    st.text('Resume pages: ' + str(resume_data['no_of_pages'] if resume_data.get('no_of_pages') else 'Not provided'))
-                except Exception as e:
-                    st.error(f"Error displaying basic info: {e}")
+                    # Store in session state
+                    st.session_state['resume_data'] = resume_data
 
-                cand_level = determine_experience_level(total_experience_years)
-                st.text(f'Total Experience: {total_experience_years} years')
-                if experience_section:
-                    st.subheader("Work Experience Details")
-                    for exp in experience_section:
-                        st.text(f"{exp['job_title']} at {exp['company']} ({exp['start_date']} - {exp['end_date']})")
+                    st.subheader("**Your Basic Info**")
+                    st.text(f"Name: {resume_data['name']}")
+                    st.text(f"Email: {resume_data['email']}")
+                    st.text(f"Contact: {resume_data['mobile_number']}")
+                    st.text(f"Resume pages: {str(resume_data['no_of_pages'] or 'Not provided')}")
+                    st.text(f"Total Experience: {total_experience_years} years")
+                    st.text(f"Experience Level: {resume_data['experience_level']}")
 
+                    if experience_section:
+                        st.subheader("**Work Experience Details**")
+                        exp_df = pd.DataFrame(experience_section)
+                        st.dataframe(exp_df)
+
+                    if resume_data['name'] != 'Not provided':
+                        st.success(f"Hello {resume_data['name']}!")
+                    else:
+                        st.success("Hello!")
+
+                # Existing skills and recommendations
                 keywords = st_tags(label='### Your Current Skills',
                                    text='See our skills recommendation below',
-                                   value=resume_data['skills'], key='1  ')
+                                   value=resume_data['skills'], key='1')
 
                 keywords_dict = {
                     'ds_dev': ['tensorflow', 'keras', 'pytorch', 'machine learning', 'deep learning', 'flask', 'streamlit'],
@@ -568,12 +715,11 @@ def run():
                 else:
                     st.warning("No recommended skills found for this job role.")
 
-                # Limit the number of skills for YouTube course fetching and reduce max videos
+                # Fetch YouTube course recommendations
                 with st.spinner('Fetching YouTube course recommendations...'):
                     youtube_courses = []
-                    max_videos = 5  # Reduced from 20 to 5
+                    max_videos = 5
                     video_count = 0
-                    # Limit to first 5 recommended skills to reduce processing time
                     for skill in all_recommended_skills[:5]:
                         if video_count >= max_videos:
                             break
@@ -582,6 +728,7 @@ def run():
                         if courses:
                             youtube_courses.extend(courses)
                             video_count += 1
+                    rec_course = str(youtube_courses)
 
                 if youtube_courses:
                     st.subheader(f"**YouTube Course Recommendations 🎓**")
@@ -603,14 +750,13 @@ def run():
                     else:
                         st.markdown(f'''<h5 style='text-align: left; color: red;'>[-] Please add {section} to improve your resume.</h5>''', unsafe_allow_html=True)
 
-                # Automatic Groq ATS Scoring
+                # ATS Scoring
                 st.subheader("**ATS Resume Evaluation**")
                 analysis = analyze_with_groq(resume_text, GROQ_API_KEY)
                 if analysis:
                     st.success("✅ Analysis Complete!")
                     st.markdown("---")
                     
-                    # Extract and display ATS Score
                     if "ATS Score:" in analysis:
                         score_line = analysis.split("ATS Score:")[1].split("\n")[0].strip()
                         score = int(score_line.split("/")[0].strip())
@@ -624,7 +770,6 @@ def run():
                         else:
                             st.error("❌ **Needs major optimization.**")
 
-                    # Extract and display Key Strengths
                     strengths_section = re.search(r'\*\*Key Strengths\*\*.*?((?:- .+?\n){3})', analysis, re.DOTALL)
                     if strengths_section:
                         strengths = strengths_section.group(1).strip().split('\n')
@@ -632,7 +777,6 @@ def run():
                         for strength in strengths:
                             st.markdown(strength)
 
-                    # Extract and display Weaknesses
                     weaknesses_section = re.search(r'\*\*Weaknesses\*\*.*?((?:- .+?\n){3})', analysis, re.DOTALL)
                     if weaknesses_section:
                         weaknesses = weaknesses_section.group(1).strip().split('\n')
@@ -640,7 +784,6 @@ def run():
                         for weakness in weaknesses:
                             st.markdown(weakness)
 
-                    # Extract and display Top 3 Optimization Tips
                     tips_section = re.search(r'\*\*Top 3 Optimization Tips\*\*.*?((?:- .+?\n){3})', analysis, re.DOTALL)
                     if tips_section:
                         tips = tips_section.group(1).strip().split('\n')
@@ -648,13 +791,22 @@ def run():
                         for tip in tips:
                             st.markdown(tip)
 
-                    # Full evaluation text
                     st.subheader("**Full ATS Resume Evaluation**")
                     st.markdown(analysis)
 
-                insert_data(resume_data['name'], resume_data['email'], str(score if 'score' in locals() else 0), timestamp,
-                            str(resume_data['no_of_pages']), reco_field, cand_level, str(resume_data['skills']),
-                            str(recommended_skills), str(rec_course))
+                # Insert data into database (aligned with repository schema)
+                insert_data(
+                    resume_data['name'],
+                    resume_data['email'],
+                    str(score if 'score' in locals() else 0),
+                    timestamp,
+                    str(resume_data['no_of_pages'] or '1'),
+                    reco_field,
+                    resume_data['experience_level'],
+                    str(resume_data['skills']),
+                    str(all_recommended_skills),
+                    rec_course
+                )
 
                 st.header("**Bonus Video for Resume Writing Tips💡**")
                 resume_vid = random.choice(resume_videos)
@@ -754,14 +906,16 @@ def run():
                 decoded_data = []
                 for row in data:
                     decoded_row = list(row)
-                    for i in range(6, 11):
+                    for i in range(7, 10):  # Adjust indices for Actual_skills, Recommended_skills, Recommended_courses
                         if isinstance(decoded_row[i], bytes):
                             decoded_row[i] = decoded_row[i].decode('utf-8')
                     decoded_data.append(decoded_row)
                 
-                df = pd.DataFrame(decoded_data, columns=['ID', 'Name', 'Email', 'Resume Score', 'Timestamp', 'Total Page',
-                                                        'Predicted Field', 'User Level', 'Actual Skills', 'Recommended Skills',
-                                                        'Recommended Course'])
+                df = pd.DataFrame(decoded_data, columns=[
+                    'ID', 'Name', 'Email', 'Resume Score', 'Timestamp', 'Total Page',
+                    'Predicted Field', 'User Level', 'Actual Skills', 'Recommended Skills',
+                    'Recommended Course'
+                ])
                 
                 st.header("**User's Data**")
                 st.dataframe(df)
