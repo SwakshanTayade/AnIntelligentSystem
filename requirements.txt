@@ -17,6 +17,8 @@ opencv-python
 python-dotenv
 nltk
 playwright
+openai
+
 #playwright install
 # scikit-learn
 # transformers==4.31.0
